@@ -22,6 +22,7 @@ model Exhibition {
   owner String
   participants Int @default(0)
   interested Int @default(0)
+  city String @default("")
   tags String?
 
   @@unique([eventId, date])
