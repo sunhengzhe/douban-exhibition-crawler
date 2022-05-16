@@ -9,8 +9,17 @@ import {HttpProxyAgent} from 'hpagent';
 
 dayjs.extend(customParseFormat)
 
-const cursorFile = path.join(__dirname, '../../cursor.json')
+const city: string = 'shanghai'
 
+const cursorFile = path.join(__dirname, `../../cursor-${city}`)
+
+const sleepBetween = () => Math.random() * 500 + 500
+
+/**
+ * 休眠一段时间
+ * @param ms 毫秒数
+ * @returns
+ */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 interface ListEntry {
@@ -27,29 +36,114 @@ interface ListEntry {
   interested: number
 }
 
+/**
+ * 有些网站限制了访问频率，需要配置一些动态 ip
+ * 参考:
+ * - https://free.kuaidaili.com/free/
+ * - http://www.66ip.cn/areaindex_1/1.html
+ * - https://www.89ip.cn/
+ */
 const ipPool = [
-  '101.132.186.175:9090',
-  '101.33.73.209:8118',
-  '106.54.128.253:999',
-  '124.204.33.162:8000',
-  '221.122.91.34:80',
-  '221.122.91.65:80',
-  '221.122.91.75:10286',
+  '101.200.49.180:8118',
   '221.122.91.76:9480',
-  '223.70.126.84:3128',
+  '39.175.85.98:30001',
+  '120.24.33.141:8000',
+  '114.55.84.12:30001',
+  '221.122.91.75:10286',
   '39.175.75.24:30001',
   '39.175.92.35:30001',
   '39.175.75.5:30001',
-  '39.175.85.98:30001'
+  '223.70.126.84:3128',
+  '221.122.91.34:80',
+  '101.33.73.209:8118',
+  '221.122.91.74:9401',
+  '221.122.91.64:9401',
+  '221.122.91.65:80',
+  '118.31.1.154:80',
 ]
 
+/**
+ *
+ */
 export default class Crawler {
   constructor(private prisma: PrismaClient) {}
 
+  /**
+   * 程序入口
+   */
+  async kickoff() {
+    if (!fs.existsSync(cursorFile)) {
+      fs.writeFileSync(cursorFile, '')
+    }
+
+    // 从上一次保存的位置开始抓
+    const [cursorDate, cursorPage] = fs.readFileSync(cursorFile).toString().split(' ')
+
+    // 默认从今天开始
+    let date = cursorDate ? dayjs(cursorDate, 'YYYYMMDD') : dayjs().startOf('day')
+    let page = cursorPage || ''
+
+    while (true) {
+      // 抓取 date 日期的数
+      await this.fetchByDate(date, page)
+
+      /**
+       * 抓完一天，抓上一天
+       * 使用 dayjs，API 文档:
+       * https://day.js.org/docs/en/installation/installation
+       */
+      date = date.subtract(1, 'day')
+      page = ''
+    }
+  }
+
+  /**
+   * 从某一页开始，抓取某一天的数据
+   * @param date 日期
+   * @param page 页数
+   */
+  async fetchByDate(date: Dayjs, page: string = '') {
+    const dateFormat = date.format('YYYYMMDD')
+
+    let url = `https://${city}.douban.com/events/${dateFormat}-exhibition${page}`
+
+    if (city === 'chengdu' || city === 'nanjing') {
+      url = `https://www.douban.com/location/${city}/events/${dateFormat}-exhibition${page}`
+    }
+
+    // 具体抓取页面逻辑
+    const [entrys, nextPage] = await this.fetchPage(url)
+
+    // 存入数据库
+    const savedCount = await this.saveExhibitions(date, entrys)
+
+    console.log('++ saved', savedCount, 'items')
+
+    // 写入已抓取天数
+    fs.writeFileSync(cursorFile, `${dateFormat} ${nextPage}`)
+
+    // 休息一会，防止过于频繁
+    await sleep(sleepBetween())
+
+    // 如果有下一页，继续递归
+    if (nextPage) {
+      await this.fetchByDate(date, nextPage)
+    }
+  }
+
+  /**
+   * 前往目标地址，抓取数据
+   * @param url 目标地址
+   * @returns
+   */
   async fetchPage(url: string): Promise<[ListEntry[], string]> {
     const ip = 'http://' + ipPool[(Math.random() * ipPool.length | 0)]
     console.log(`+ fetch ${url} by ${ip}`)
 
+    /**
+     * 使用 got 拿到响应
+     * https://github.com/sindresorhus/got
+     */
     const resp = await got.get(
       url,
       {
@@ -69,8 +163,11 @@ export default class Crawler {
           'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
-          Cookie: 'bid=eHJbUc6ZrE4; ll="108288"; gr_user_id=0fe57a9a-b6fc-4ca6-8b22-386c20648cde; __utmc=30149280; __utmz=30149280.1650362696.4.4.utmcsr=google|utmccn=(organic)|utmcmd=organic|utmctr=(not%20provided); viewed="35469273_1467587_1438119_26638316"; ct=y; _vwo_uuid_v2=DEA093611EFD7C4302D6C53D74A5DB9F1|2d5bb2b754e5fc27bd0d8b0d14406b06; _pk_ses.100001.f666=*; __utma=30149280.1487150550.1647053377.1651120859.1651126139.10; dbcl2="223939429:+SBPJRfv4zI"; ck=m0hv; push_noty_num=0; push_doumail_num=0; __utmt=1; __utmv=30149280.22393; _pk_id.100001.f666=0aed0545740d5f1c.1651056196.6.1651128055.1651120858.; __utmb=30149280.10.10.1651126139',
-          Host: 'beijing.douban.com',
+          /**
+           * Cookie, 如果需要的话
+           */
+          Cookie: 'place your cookie here',
+          Host: (new URL(url)).host,
           Pragma: 'no-cache',
           Referer: 'https://open.weixin.qq.com/',
           'sec-ch-ua': '" Not A;Brand";v="99", "Chromium";v="100", "Google Chrome";v="100"',
@@ -86,8 +183,15 @@ export default class Crawler {
       }
     )
 
+    /**
+     * 使用 cheerio 解析 HTML
+     * https://github.com/cheeriojs/cheerio
+     */
     const $ = cheerio.load(resp.body)
 
+    /**
+     * 类 jQuery 的 API
+     */
     const $listEntrys = $('.events-list .list-entry')
 
     const listEntrys = $listEntrys
@@ -101,6 +205,9 @@ export default class Crawler {
         const title = $title.attr('title')
         const $tags = $ele.find('.event-cate-tag a')
 
+        /**
+         * 获取页面内需要的信息
+         */
         const tags = $tags
           .map((i, e) => {
             const match = $(e).attr('href')?.match('search_text=([^&$]+)')
@@ -110,7 +217,6 @@ export default class Crawler {
           .join(',')
 
         const time = $ele.find('.event-meta .event-time').contents().eq(2).text().trim()
-
         const location = $ele.find('.event-meta li').eq(1).attr('title')
         const fee = $ele.find('.event-meta .fee strong').text()
         const owner = $ele.find('.event-meta a[target="db-event-owner"]').text()
@@ -143,36 +249,9 @@ export default class Crawler {
     return [ listEntrys, nextPage ]
   }
 
-  async fetchByDate(date: Dayjs, page: string = '') {
-    const dateFormat = date.format('YYYYMMDD')
-
-    const url = `https://beijing.douban.com/events/${dateFormat}-exhibition${page}`
-
-    const [entrys, nextPage] = await this.fetchPage(url)
-
-    await this.saveExhibitions(date, entrys)
-
-    console.log('++ saved', entrys.length, 'items')
-
-    if (entrys.length === 0) {
-      console.log('No date found:', url)
-      return
-    }
-
-    // 写入已抓取天数
-    fs.writeFileSync(cursorFile, JSON.stringify({
-      page: page,
-      date: dateFormat,
-    }))
-
-    // 下一页
-    await sleep((Math.random() * 2 + 1) * 1000)
-
-    if (nextPage) {
-      await this.fetchByDate(date, nextPage)
-    }
-  }
-
+  /**
+   * 批量写入数据库
+   */
   async saveExhibitions(date: Dayjs, entrys: ListEntry[]) {
     const exhibitions = entrys.map(item => {
       return {
@@ -187,34 +266,24 @@ export default class Crawler {
         interested: item.interested,
         tags: item.tags,
         date: date.format('YYYY-MM-DD'),
+        city,
       }
     })
+
+    let success = 0
 
     for (let exhibition of exhibitions) {
       try {
         await this.prisma.exhibition.create({
           data: exhibition
         })
+
+        success++
       } catch (e) {
         console.log(date.format('YYYY-MM-DD'), exhibition.eventId, exhibition.title)
       }
     }
-  }
 
-  async kickoff() {
-    const cursor = JSON.parse(
-      fs.readFileSync(cursorFile).toString() || '{}'
-    )
-
-    // 默认从今天开始
-    let date = cursor.date ? dayjs(cursor.date, 'YYYYMMDD') : dayjs().startOf('day')
-
-    while (true) {
-      const page = cursor.page || ''
-
-      await this.fetchByDate(date, page)
-
-      date = date.subtract(1, 'day')
-    }
+    return success
   }
 }

@@ -25,5 +25,5 @@ model Exhibition {
   city String @default("")
   tags String?
 
-  @@unique([eventId, date])
+  @@unique([city, eventId, date])
 }
