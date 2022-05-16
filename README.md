@@ -17,3 +17,18 @@ node -v
 # 数据库配置
 mv .env.sample .env
 ```
+
+## 安装依赖
+
+npm
+
+```bash
+npm install
+```
+
+## 运行
+
+```bash
+# demo
+npm run demo
+```
